@@ -1,0 +1,525 @@
+import mongoose from "mongoose";
+import Cart from "../models/cart.model.js";
+import Order from "../models/order.model.js";
+import User from "../models/user.model.js";
+import Restaurant from "../models/restaurant.model.js";
+import Coupon from "../models/coupon.model.js";
+import Rider from "../models/rider.model.js";
+import { AppError } from "../utils/AppError.js";
+import {
+  OrderStatus,
+  OrderSource,
+  PaymentMethod,
+  PaymentStatus,
+  RiderAvailability,
+  SupportIssueType,
+  UserRole,
+} from "../types/enums.js";
+import { createSupportTicket } from "./support.service.js";
+import { ensureRestaurantForCart, recalculateCart } from "./cart.service.js";
+import { AuthRequest } from "../types/auth.types.js";
+import {
+  broadcastOrderEvent,
+  emitOrderStatusChange,
+} from "./socket.service.js";
+import { SocketEvents } from "../types/socket.events.js";
+
+const CANCELLABLE_STATUSES: OrderStatus[] = [
+  OrderStatus.PENDING,
+  OrderStatus.CONFIRMED,
+  OrderStatus.PREPARING,
+];
+
+const ACTIVE_STATUSES: OrderStatus[] = [
+  OrderStatus.PENDING,
+  OrderStatus.CONFIRMED,
+  OrderStatus.PREPARING,
+  OrderStatus.READY_FOR_PICKUP,
+  OrderStatus.RIDER_ASSIGNED,
+  OrderStatus.PICKED_UP,
+  OrderStatus.ON_THE_WAY,
+];
+
+const STATUS_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
+  [OrderStatus.PENDING]: [OrderStatus.CONFIRMED, OrderStatus.CANCELLED],
+  [OrderStatus.CONFIRMED]: [OrderStatus.PREPARING, OrderStatus.CANCELLED],
+  [OrderStatus.PREPARING]: [OrderStatus.READY_FOR_PICKUP, OrderStatus.CANCELLED],
+  [OrderStatus.READY_FOR_PICKUP]: [
+    OrderStatus.RIDER_ASSIGNED,
+    OrderStatus.CANCELLED,
+  ],
+  [OrderStatus.RIDER_ASSIGNED]: [OrderStatus.PICKED_UP, OrderStatus.CANCELLED],
+  [OrderStatus.PICKED_UP]: [OrderStatus.ON_THE_WAY],
+  [OrderStatus.ON_THE_WAY]: [OrderStatus.DELIVERED],
+  [OrderStatus.DELIVERED]: [],
+  [OrderStatus.CANCELLED]: [],
+};
+
+const RESTAURANT_STATUSES: OrderStatus[] = [
+  OrderStatus.CONFIRMED,
+  OrderStatus.PREPARING,
+  OrderStatus.READY_FOR_PICKUP,
+];
+
+const RIDER_STATUSES: OrderStatus[] = [
+  OrderStatus.PICKED_UP,
+  OrderStatus.ON_THE_WAY,
+  OrderStatus.DELIVERED,
+];
+
+export function idString(
+  value: mongoose.Types.ObjectId | { _id?: mongoose.Types.ObjectId },
+): string {
+  if (value && typeof value === "object" && "_id" in value && value._id) {
+    return value._id.toString();
+  }
+  return value.toString();
+}
+
+function restaurantOwnerId(
+  order: InstanceType<typeof Order>,
+): string | null {
+  const r = order.restaurantId as unknown;
+  if (r && typeof r === "object" && "ownerId" in r) {
+    return idString((r as { ownerId: mongoose.Types.ObjectId }).ownerId);
+  }
+  return null;
+}
+
+export function generateOrderNumber(): string {
+  const ts = Date.now().toString(36).toUpperCase();
+  const rand = Math.floor(1000 + Math.random() * 9000);
+  return `ORD-${ts}-${rand}`;
+}
+
+export function generateDeliveryOtp(): string {
+  return String(Math.floor(1000 + Math.random() * 9000));
+}
+
+export async function getOrderOrFail(orderId: string) {
+  const order = await Order.findById(orderId)
+    .populate("restaurantId", "restaurantName logo slug ownerId")
+    .populate("customerId", "fullName mobile email")
+    .populate({
+      path: "riderId",
+      select: "riderCode vehicleType userId",
+      populate: { path: "userId", select: "fullName mobile" },
+    });
+  if (!order) {
+    throw new AppError("Order not found", 404);
+  }
+  return order;
+}
+
+export async function assertOrderAccess(
+  req: AuthRequest,
+  order: InstanceType<typeof Order>,
+): Promise<void> {
+  const userId = req.userId!;
+  const role = req.userRole;
+
+  if (idString(order.customerId) === userId) return;
+
+  if (role === UserRole.RESTAURANT_OWNER && restaurantOwnerId(order) === userId) {
+    return;
+  }
+
+  if (role === UserRole.RIDER && order.riderId) {
+    const rider = await Rider.findOne({ userId });
+    if (rider && idString(order.riderId) === rider._id.toString()) {
+      return;
+    }
+  }
+
+  throw new AppError("You do not have access to this order", 403);
+}
+
+function pushTimeline(
+  order: InstanceType<typeof Order>,
+  status: string,
+  updatedBy: string,
+) {
+  order.timelineLogs.push({
+    status,
+    updatedBy,
+    timestamp: new Date(),
+  });
+}
+
+export async function createOrderFromCart(
+  userId: string,
+  input: {
+    deliveryAddressId: string;
+    paymentMethod: PaymentMethod;
+    couponId?: string;
+    deliveryInstructions?: string;
+    orderSource?: OrderSource;
+    useWallet?: boolean;
+  },
+) {
+  let cart = await Cart.findOne({ userId });
+  if (!cart || cart.items.length === 0) {
+    throw new AppError("Cart is empty. Add items before placing an order", 400);
+  }
+
+  cart = await recalculateCart(cart);
+  const restaurant = await ensureRestaurantForCart(cart.restaurantId.toString());
+
+  if (cart.subtotal < restaurant.minimumOrderAmount) {
+    throw new AppError(
+      `Minimum order amount is ₹${restaurant.minimumOrderAmount}`,
+      400,
+    );
+  }
+
+  const user = await User.findById(userId);
+  if (!user || user.isDeleted) {
+    throw new AppError("User not found", 404);
+  }
+
+  const address = user.addresses.id(input.deliveryAddressId);
+  if (!address) {
+    throw new AppError("Delivery address not found", 404);
+  }
+
+  const fullAddress = String(address.get("fullAddress") ?? "");
+  const latitude = address.get("latitude") as number | undefined;
+  const longitude = address.get("longitude") as number | undefined;
+
+  if (latitude == null || longitude == null) {
+    throw new AppError("Delivery address must include latitude and longitude", 400);
+  }
+
+  let walletDeduction = 0;
+  if (input.paymentMethod === PaymentMethod.WALLET) {
+    if (user.walletBalance < cart.grandTotal) {
+      throw new AppError("Insufficient wallet balance", 400);
+    }
+    walletDeduction = cart.grandTotal;
+    user.walletBalance -= walletDeduction;
+    await user.save();
+  } else if (input.useWallet && user.walletBalance > 0) {
+    walletDeduction = Math.min(user.walletBalance, cart.grandTotal);
+    user.walletBalance -= walletDeduction;
+    await user.save();
+  }
+
+  const couponId = input.couponId ?? cart.appliedCouponId?.toString();
+
+  const orderItems = cart.items.map((line) => ({
+    menuItemId: line.menuItemId,
+    itemName: line.itemName,
+    quantity: line.quantity,
+    price: line.price,
+    addons: line.addons ?? [],
+    specialInstructions: line.specialInstructions,
+    total: line.total,
+  }));
+
+  const isCod = input.paymentMethod === PaymentMethod.COD;
+  const isWalletFull =
+    input.paymentMethod === PaymentMethod.WALLET ||
+    walletDeduction >= cart.grandTotal;
+  const isOnline = input.paymentMethod === PaymentMethod.ONLINE;
+
+  const initialStatus =
+    isCod || isWalletFull ? OrderStatus.CONFIRMED : OrderStatus.PENDING;
+
+  if (couponId && !isOnline) {
+    const coupon = await Coupon.findById(couponId);
+    if (coupon) {
+      coupon.usedCount += 1;
+      await coupon.save();
+    }
+  }
+
+  const paymentStatus =
+    isWalletFull || isCod
+      ? isCod
+        ? PaymentStatus.PENDING
+        : PaymentStatus.CAPTURED
+      : PaymentStatus.PENDING;
+
+  const order = await Order.create({
+    orderNumber: generateOrderNumber(),
+    customerId: userId,
+    restaurantId: cart.restaurantId,
+    orderSource: input.orderSource ?? OrderSource.APP,
+    orderItems,
+    subtotal: cart.subtotal,
+    taxAmount: cart.taxAmount,
+    deliveryFee: cart.deliveryFee,
+    platformFee: cart.platformFee,
+    packagingCharge: 0,
+    surgeFee: 0,
+    couponDiscount: cart.couponDiscount,
+    walletDeduction,
+    grandTotal: cart.grandTotal,
+    paymentMethod: input.paymentMethod,
+    paymentStatus,
+    appliedCouponId: couponId ? new mongoose.Types.ObjectId(couponId) : undefined,
+    orderStatus: initialStatus,
+    customerAddress: {
+      fullAddress,
+      latitude,
+      longitude,
+    },
+    deliveryInstructions: input.deliveryInstructions,
+    deliveryOtp: generateDeliveryOtp(),
+    estimatedPreparationTime: 30,
+    estimatedDeliveryTime: new Date(Date.now() + 45 * 60 * 1000),
+    timelineLogs: [
+      {
+        status: OrderStatus.PENDING,
+        updatedBy: userId,
+        timestamp: new Date(),
+      },
+    ],
+    fraudFlags: [],
+  });
+
+  if (initialStatus === OrderStatus.CONFIRMED) {
+    order.acceptedAt = new Date();
+    pushTimeline(order, OrderStatus.CONFIRMED, "system");
+    await order.save();
+    broadcastOrderEvent(order, SocketEvents.ORDER_CREATED);
+    broadcastOrderEvent(order, SocketEvents.ORDER_CONFIRMED);
+  } else {
+    broadcastOrderEvent(order, SocketEvents.ORDER_CREATED);
+  }
+
+  cart.set("items", []);
+  cart.appliedCouponId = undefined;
+  await recalculateCart(cart);
+
+  restaurant.totalOrders = (restaurant.totalOrders ?? 0) + 1;
+  await restaurant.save();
+
+  return order;
+}
+
+export async function updateOrderStatus(
+  req: AuthRequest,
+  orderId: string,
+  newStatus: OrderStatus,
+  cancellationReason?: string,
+) {
+  const order = await getOrderOrFail(orderId);
+  await assertOrderAccess(req, order);
+
+  const current = order.orderStatus;
+  const allowed = STATUS_TRANSITIONS[current];
+  if (!allowed.includes(newStatus)) {
+    throw new AppError(
+      `Cannot transition from ${current} to ${newStatus}`,
+      400,
+    );
+  }
+
+  if (
+    newStatus === OrderStatus.CONFIRMED &&
+    current === OrderStatus.PENDING &&
+    order.paymentMethod === PaymentMethod.ONLINE &&
+    order.paymentStatus === PaymentStatus.PENDING
+  ) {
+    throw new AppError(
+      "Order is awaiting online payment. Complete payment before confirming",
+      400,
+    );
+  }
+
+  const role = req.userRole ?? UserRole.CUSTOMER;
+
+  if (RESTAURANT_STATUSES.includes(newStatus)) {
+    const ownerId = restaurantOwnerId(order);
+    if (role !== UserRole.RESTAURANT_OWNER || ownerId !== req.userId) {
+      throw new AppError("Only restaurant owner can set this status", 403);
+    }
+  }
+
+  if (RIDER_STATUSES.includes(newStatus)) {
+    const rider = await Rider.findOne({ userId: req.userId });
+    if (
+      role !== UserRole.RIDER ||
+      !rider ||
+      !order.riderId ||
+      idString(order.riderId) !== rider._id.toString()
+    ) {
+      throw new AppError("Only assigned rider can set this status", 403);
+    }
+  }
+
+  if (newStatus === OrderStatus.CANCELLED && role === UserRole.CUSTOMER) {
+    if (!CANCELLABLE_STATUSES.includes(current)) {
+      throw new AppError("Order can no longer be cancelled", 400);
+    }
+  }
+
+  order.orderStatus = newStatus;
+  pushTimeline(order, newStatus, req.userId!);
+
+  const now = new Date();
+  if (newStatus === OrderStatus.CONFIRMED) order.acceptedAt = now;
+  if (newStatus === OrderStatus.PREPARING) order.preparedAt = now;
+  if (newStatus === OrderStatus.PICKED_UP) order.pickedUpAt = now;
+  if (newStatus === OrderStatus.DELIVERED) {
+    order.deliveredAt = now;
+    order.paymentStatus =
+      order.paymentMethod === PaymentMethod.COD
+        ? PaymentStatus.CAPTURED
+        : order.paymentStatus;
+  }
+  if (newStatus === OrderStatus.CANCELLED) {
+    order.cancelledAt = now;
+    order.cancellationReason = cancellationReason;
+    if (order.walletDeduction > 0) {
+      const user = await User.findById(order.customerId);
+      if (user) {
+        user.walletBalance += order.walletDeduction;
+        await user.save();
+      }
+      order.refundAmount = order.walletDeduction;
+    }
+  }
+
+  await order.save();
+  emitOrderStatusChange(order);
+  return order;
+}
+
+export async function cancelOrder(
+  req: AuthRequest,
+  orderId: string,
+  reason?: string,
+) {
+  const order = await getOrderOrFail(orderId);
+  if (idString(order.customerId) !== req.userId) {
+    throw new AppError("Only the customer can cancel this order", 403);
+  }
+  if (!CANCELLABLE_STATUSES.includes(order.orderStatus)) {
+    throw new AppError("Order can no longer be cancelled", 400);
+  }
+  return updateOrderStatus(
+    req,
+    orderId,
+    OrderStatus.CANCELLED,
+    reason ?? "Cancelled by customer",
+  );
+}
+
+export async function assignRiderToOrder(
+  req: AuthRequest,
+  orderId: string,
+  riderUserId?: string,
+) {
+  const order = await getOrderOrFail(orderId);
+  const targetUserId = riderUserId ?? req.userId!;
+  const rider = await Rider.findOne({ userId: targetUserId });
+  if (!rider) {
+    throw new AppError("Rider not found", 404);
+  }
+
+  if (order.orderStatus !== OrderStatus.READY_FOR_PICKUP) {
+    throw new AppError("Order is not ready for rider assignment", 400);
+  }
+
+  order.riderId = rider._id;
+  order.orderStatus = OrderStatus.RIDER_ASSIGNED;
+  pushTimeline(order, OrderStatus.RIDER_ASSIGNED, req.userId!);
+
+  rider.currentOrderId = order._id;
+  rider.availabilityStatus = RiderAvailability.ON_DELIVERY;
+  await Promise.all([order.save(), rider.save()]);
+  broadcastOrderEvent(order, SocketEvents.RIDER_ASSIGNED);
+  return order;
+}
+
+export async function verifyDeliveryOtp(
+  userId: string,
+  orderId: string,
+  otp: string,
+) {
+  const order = await getOrderOrFail(orderId);
+  if (idString(order.customerId) !== userId) {
+    throw new AppError("Only the customer can verify delivery", 403);
+  }
+  if (![OrderStatus.ON_THE_WAY, OrderStatus.PICKED_UP].includes(order.orderStatus)) {
+    throw new AppError("Order is not out for delivery", 400);
+  }
+  if (order.deliveryOtp !== otp) {
+    throw new AppError("Invalid delivery OTP", 400);
+  }
+
+  order.orderStatus = OrderStatus.DELIVERED;
+  order.deliveredAt = new Date();
+  if (order.paymentMethod === PaymentMethod.COD) {
+    order.paymentStatus = PaymentStatus.CAPTURED;
+  }
+  pushTimeline(order, OrderStatus.DELIVERED, userId);
+  await order.save();
+  emitOrderStatusChange(order);
+  return order;
+}
+
+export async function buildTrackPayload(order: InstanceType<typeof Order>) {
+  const { getLiveRiderLocation } = await import("./tracking.service.js");
+  const live = await getLiveRiderLocation(order._id.toString());
+
+  return {
+    orderId: order._id,
+    orderNumber: order.orderNumber,
+    orderStatus: order.orderStatus,
+    paymentStatus: order.paymentStatus,
+    restaurantId: order.restaurantId,
+    riderId: order.riderId,
+    riderLocation: live
+      ? { latitude: live.latitude, longitude: live.longitude }
+      : order.riderLocation,
+    liveLocation: live,
+    estimatedPreparationTime: order.estimatedPreparationTime,
+    estimatedDeliveryTime: order.estimatedDeliveryTime,
+    timelineLogs: order.timelineLogs,
+    deliveredAt: order.deliveredAt,
+  };
+}
+
+export async function attachLiveRiderLocation(
+  order: InstanceType<typeof Order>,
+): Promise<InstanceType<typeof Order>> {
+  const { getLiveRiderLocation } = await import("./tracking.service.js");
+  const live = await getLiveRiderLocation(order._id.toString());
+  if (live) {
+    order.riderLocation = {
+      latitude: live.latitude,
+      longitude: live.longitude,
+    };
+  }
+  return order;
+}
+
+export async function requestRefund(
+  userId: string,
+  orderId: string,
+  description: string,
+) {
+  const order = await Order.findById(orderId);
+  if (!order) {
+    throw new AppError("Order not found", 404);
+  }
+  if (idString(order.customerId) !== userId) {
+    throw new AppError("You do not own this order", 403);
+  }
+  if (order.orderStatus !== OrderStatus.DELIVERED) {
+    throw new AppError("Refund can only be requested for delivered orders", 400);
+  }
+
+  return createSupportTicket({
+    customerId: userId,
+    orderId: order._id.toString(),
+    issueType: SupportIssueType.REFUND,
+    description,
+    images: [],
+  });
+}
+
+export { ACTIVE_STATUSES, CANCELLABLE_STATUSES };
