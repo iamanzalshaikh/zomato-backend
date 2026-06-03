@@ -151,15 +151,99 @@ export const getMenuItemsByRestaurant = async (
     const restaurantId = paramId(req.params.restaurantId);
     await assertPublicRestaurant(restaurantId);
 
-    const items = await MenuItem.find({
+    const filter: Record<string, unknown> = {
       restaurantId,
       isDeleted: false,
-    })
+    };
+
+    if (req.query.recommended === "true") {
+      filter.isRecommended = true;
+    }
+
+    const items = await MenuItem.find(filter)
       .populate("categoryId", "categoryName sortOrder")
       .sort({ isRecommended: -1, itemName: 1 })
       .lean();
 
     sendSuccess(res, "Menu items fetched", { items });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const getCombosByRestaurant = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const restaurantId = paramId(req.params.restaurantId);
+    await assertPublicRestaurant(restaurantId);
+
+    const items = await MenuItem.find({
+      restaurantId,
+      isDeleted: false,
+      isAvailable: true,
+    })
+      .populate("categoryId", "categoryName")
+      .lean();
+
+    const beverages = items.filter((it) => {
+      const catName = (it.categoryId as any)?.categoryName?.toLowerCase() ?? "";
+      const itemName = it.itemName.toLowerCase();
+      return (
+        catName.includes("beverage") ||
+        catName.includes("drink") ||
+        itemName.includes("lemonade") ||
+        itemName.includes("smoothie") ||
+        itemName.includes("shake") ||
+        itemName.includes("cola") ||
+        itemName.includes("juice")
+      );
+    });
+
+    const foods = items.filter((it) => !beverages.includes(it));
+
+    const combos: Array<{
+      id: string;
+      title: string;
+      image: string;
+      price: number;
+      tag: string;
+      foodType: string;
+      mainItem: any;
+    }> = [];
+
+    if (foods.length > 0 && beverages.length > 0) {
+      foods.slice(0, 3).forEach((food, idx) => {
+        const bev = beverages[idx % beverages.length];
+        const comboPrice = Math.round(((food.discountedPrice ?? food.price) + (bev.discountedPrice ?? bev.price)) * 0.9);
+        combos.push({
+          id: `combo-${food._id}-${bev._id}`,
+          title: `${food.itemName} + ${bev.itemName}`,
+          image: food.images?.[0] || bev.images?.[0] || "",
+          price: comboPrice,
+          tag: `Ordered by ${40 - idx * 10}+ customers`,
+          foodType: food.foodType,
+          mainItem: food,
+        });
+      });
+    } else if (foods.length >= 2) {
+      const food1 = foods[0];
+      const food2 = foods[1];
+      const comboPrice = Math.round(((food1.discountedPrice ?? food1.price) + (food2.discountedPrice ?? food2.price)) * 0.85);
+      combos.push({
+        id: `combo-${food1._id}-${food2._id}`,
+        title: `${food1.itemName} + ${food2.itemName}`,
+        image: food1.images?.[0] || food2.images?.[0] || "",
+        price: comboPrice,
+        tag: "Best Value Combo",
+        foodType: food1.foodType === "veg" && food2.foodType === "veg" ? "veg" : "nonveg",
+        mainItem: food1,
+      });
+    }
+
+    sendSuccess(res, "Restaurant combos fetched", { combos });
   } catch (err) {
     next(err);
   }

@@ -13,8 +13,10 @@ import adminRoutes from "./admin.routes.js";
 import supportRoutes from "./support.routes.js";
 import analyticsRoutes from "./analytics.routes.js";
 import searchRoutes from "./search.routes.js";
+import reviewsRoutes from "./reviews.routes.js";
 import publicRoutes from "./public.routes.js";
 import systemRoutes from "./system.routes.js";
+import couponsRoutes from "./coupons.routes.js";
 
 const router: express.Router = express.Router();
 
@@ -51,6 +53,8 @@ router.use("/admin", adminRoutes);
 router.use("/support", supportRoutes);
 router.use("/analytics", analyticsRoutes);
 router.use("/search", searchRoutes);
+router.use("/reviews", reviewsRoutes);
 router.use("/profile", profileRoutes);
+router.use("/coupons", couponsRoutes);
 
 export default router;

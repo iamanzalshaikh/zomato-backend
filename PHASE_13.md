@@ -80,6 +80,17 @@ Returns counts: users, restaurants (pending), riders (pending), orders (today/ac
 
 Process actual Razorpay refund via `POST /payments/refund` (customer) or extend admin refund action later.
 
+## Coupon Management
+
+Admin-only endpoints to manage promotional vouchers (e.g., WELCOME50, VIP Vouchers, District Vouchers):
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| POST | `/api/v1/coupons` | Create a new coupon with validation constraints |
+| DELETE | `/api/v1/coupons/:couponId` | Revoke/delete an active coupon from the database |
+
+Requires header: `Authorization: Bearer <admin-accessToken>`
+
 ## Not in MVP
 
 | Feature | Status |

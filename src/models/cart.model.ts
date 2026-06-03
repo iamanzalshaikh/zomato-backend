@@ -23,6 +23,10 @@ export interface ICartDocument extends Document {
   couponDiscount: number;
   grandTotal: number;
   appliedCouponId?: mongoose.Types.ObjectId;
+  generalNote?: string;
+  dontSendCutlery: boolean;
+  isVipMode: boolean;
+  goldDiscount: number;
 }
 
 const cartSchema = new Schema<ICartDocument>(
@@ -37,6 +41,10 @@ const cartSchema = new Schema<ICartDocument>(
     couponDiscount: { type: Number, default: 0 },
     grandTotal: { type: Number, default: 0 },
     appliedCouponId: { type: Schema.Types.ObjectId, ref: "Coupon" },
+    generalNote: { type: String, default: "" },
+    dontSendCutlery: { type: Boolean, default: false },
+    isVipMode: { type: Boolean, default: false },
+    goldDiscount: { type: Number, default: 0 },
   },
   { timestamps: true, collection: "carts" },
 );

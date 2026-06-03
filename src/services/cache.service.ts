@@ -12,6 +12,7 @@ export const CacheKeys = {
   nearbyRestaurants: (lat: number, lng: number, radiusKm: number, page: number, limit: number) =>
     `${PREFIX}restaurants:nearby:${lat.toFixed(4)}:${lng.toFixed(4)}:${radiusKm}:${page}:${limit}`,
   menuItems: (restaurantId: string) => `${PREFIX}menu:${restaurantId}`,
+  recommendedRestaurants: () => `${PREFIX}restaurants:recommended`,
   trendingSearches: () => `${PREFIX}search:trending`,
 } as const;
 

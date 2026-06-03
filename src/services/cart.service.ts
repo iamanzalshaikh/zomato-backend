@@ -3,6 +3,7 @@ import Cart from "../models/cart.model.js";
 import MenuItem from "../models/menuItem.model.js";
 import Restaurant from "../models/restaurant.model.js";
 import Coupon from "../models/coupon.model.js";
+import User from "../models/user.model.js";
 import { AppError } from "../utils/AppError.js";
 import {
   CouponDiscountType,
@@ -57,15 +58,25 @@ export async function recalculateCart(cart: InstanceType<typeof Cart>) {
   subtotal = Math.round(subtotal * 100) / 100;
   taxAmount = Math.round(taxAmount * 100) / 100;
 
-  const deliveryFee =
+  const user = await User.findById(cart.userId);
+  const isGold = user?.isGoldMember || false;
+
+  let deliveryFee =
     subtotal >= restaurant.minimumOrderAmount
       ? DEFAULT_DELIVERY_FEE
       : DEFAULT_DELIVERY_FEE;
 
-  const platformFee = Math.min(
+  let platformFee = Math.min(
     MAX_PLATFORM_FEE,
     Math.round((subtotal * PLATFORM_FEE_PERCENT) / 100),
   );
+
+  let goldDiscount = 0;
+  if (isGold) {
+    goldDiscount = deliveryFee + platformFee;
+    deliveryFee = 0;
+    platformFee = 0;
+  }
 
   let couponDiscount = 0;
   if (cart.appliedCouponId) {
@@ -80,6 +91,7 @@ export async function recalculateCart(cart: InstanceType<typeof Cart>) {
   cart.deliveryFee = deliveryFee;
   cart.platformFee = platformFee;
   cart.couponDiscount = couponDiscount;
+  cart.goldDiscount = goldDiscount;
   cart.grandTotal = Math.max(
     0,
     Math.round(
@@ -164,7 +176,7 @@ export async function getOrCreateCart(
 
 export async function getUserCart(userId: string) {
   const cart = await Cart.findOne({ userId })
-    .populate("restaurantId", "restaurantName slug logo minimumOrderAmount isOpen")
+    .populate("restaurantId", "restaurantName slug logo minimumOrderAmount isOpen averageDeliveryTime")
     .populate("appliedCouponId", "couponCode title discountType discountValue");
   return cart;
 }

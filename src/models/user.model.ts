@@ -33,6 +33,7 @@ export interface IUserDocument extends Document {
   lastLoginAt?: Date;
   lastLoginIP?: string;
   isDeleted: boolean;
+  isGoldMember: boolean;
   createdAt: Date;
   updatedAt: Date;
   comparePassword(entered: string): Promise<boolean>;
@@ -67,6 +68,7 @@ const userSchema = new Schema<IUserDocument>(
     dateOfBirth: Date,
     walletBalance: { type: Number, default: 0, min: 0 },
     loyaltyPoints: { type: Number, default: 0, min: 0 },
+    isGoldMember: { type: Boolean, default: true },
     referralCode: { type: String, unique: true, sparse: true },
     referredBy: { type: Schema.Types.ObjectId, ref: "User" },
     favoriteRestaurants: [{ type: Schema.Types.ObjectId, ref: "Restaurant" }],

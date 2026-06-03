@@ -6,7 +6,10 @@ import {
   verifyPayment,
   handlePaymentWebhook,
   getPaymentById,
+  devConfirmPaymentOrder,
 } from "../services/payment.service.js";
+import { env } from "../config/env.js";
+import { AppError } from "../utils/AppError.js";
 import { enqueueRefundJob } from "../queues/refund.queue.js";
 import { buildAuditContext, writeAuditLog } from "../services/audit.service.js";
 
@@ -108,6 +111,23 @@ export const refundPayment = async (
       result.queued ? "Refund queued for processing" : "Refund processed",
       result,
     );
+  } catch (err) {
+    next(err);
+  }
+};
+
+// POST /payments/dev-confirm — development only
+export const devConfirmPayment = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    if (env.NODE_ENV === "production") {
+      throw new AppError("Not available", 404);
+    }
+    const result = await devConfirmPaymentOrder(req.userId!, req.body.orderId);
+    sendSuccess(res, "Payment confirmed (development)", result);
   } catch (err) {
     next(err);
   }

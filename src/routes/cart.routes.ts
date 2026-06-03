@@ -15,6 +15,7 @@ import {
   clearCart,
   applyCoupon,
   removeCoupon,
+  updateCartPreferences,
 } from "../controllers/cart.controller.js";
 
 const router = Router();
@@ -36,5 +37,6 @@ router.post(
   asyncHandler(applyCoupon),
 );
 router.delete("/remove-coupon", asyncHandler(removeCoupon));
+router.patch("/preferences", asyncHandler(updateCartPreferences));
 
 export default router;

@@ -14,6 +14,7 @@ import {
   getPayment,
   refundPayment,
   walletAddMoneyStub,
+  devConfirmPayment,
 } from "../controllers/payments.controller.js";
 
 const router = Router();
@@ -38,6 +39,7 @@ router.post(
   validate(refundPaymentSchema),
   asyncHandler(refundPayment),
 );
+router.post("/dev-confirm", isAuth, validate(createPaymentOrderSchema), asyncHandler(devConfirmPayment));
 router.post("/wallet/add-money", isAuth, asyncHandler(walletAddMoneyStub));
 router.get("/:paymentId", isAuth, asyncHandler(getPayment));
 

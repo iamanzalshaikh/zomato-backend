@@ -21,6 +21,14 @@ const startServer = async () => {
     await connectDB();
     logger.info("✅ MongoDB connected");
 
+    try {
+      const User = (await import("./models/user.model.js")).default;
+      await User.updateMany({}, { $set: { isGoldMember: true } });
+      logger.info("✅ All users updated to Gold membership for testing");
+    } catch (e: any) {
+      logger.error("Error updating users to Gold: " + e.message);
+    }
+
     await connectRedis();
     logger.info("✅ Redis connected");
 

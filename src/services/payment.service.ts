@@ -374,3 +374,48 @@ export async function initiateRefund(
 
   return { payment, refund };
 }
+
+/** Development-only: confirm ONLINE order without Razorpay checkout UI */
+export async function devConfirmPaymentOrder(userId: string, orderId: string) {
+  if (env.NODE_ENV === "production") {
+    throw new AppError("Not available in production", 404);
+  }
+
+  const order = await Order.findById(orderId);
+  if (!order) {
+    throw new AppError("Order not found", 404);
+  }
+  if (idString(order.customerId) !== userId) {
+    throw new AppError("You do not own this order", 403);
+  }
+  if (order.paymentMethod !== PaymentMethod.ONLINE) {
+    throw new AppError("Order is not an online payment order", 400);
+  }
+
+  const payable = getOrderPayableAmount(order);
+  let payment = await Payment.findOne({ orderId: order._id });
+
+  if (!payment) {
+    payment = await Payment.create({
+      orderId: order._id,
+      userId,
+      gateway: PaymentGateway.RAZORPAY,
+      amount: payable,
+      currency: "INR",
+      paymentMethod: GatewayPaymentMethod.UPI,
+      paymentStatus: PaymentStatus.CAPTURED,
+      paidAt: new Date(),
+      transactionId: `DEV-${order.orderNumber}`,
+      gatewayPaymentId: `dev_pay_${order._id}`,
+      gatewayOrderId: `dev_order_${order._id}`,
+    });
+  } else {
+    payment.paymentStatus = PaymentStatus.CAPTURED;
+    payment.paidAt = new Date();
+    payment.transactionId = payment.transactionId ?? `DEV-${order.orderNumber}`;
+    await payment.save();
+  }
+
+  const confirmed = await confirmOrderAfterPayment(order, payment, "dev-confirm");
+  return { payment, order: confirmed, autoConfirmed: true };
+}

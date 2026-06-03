@@ -15,6 +15,7 @@ import {
   nearbyRestaurants,
   searchRestaurants,
 } from "../services/restaurant.service.js";
+import { CacheKeys, cacheGetOrSet } from "../services/cache.service.js";
 
 function paramId(value: string | string[]): string {
   return Array.isArray(value) ? value[0] : value;
@@ -116,6 +117,33 @@ export const getRestaurants = async (
     next(err);
   }
 };
+
+// GET /restaurants/recommended — fetch top-rated restaurants
+export const getRecommendedRestaurants = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const key = CacheKeys.recommendedRestaurants();
+    const result = await cacheGetOrSet(key, async () => {
+      const filter = {
+        isDeleted: false,
+        restaurantStatus: RestaurantStatus.APPROVED,
+      };
+      const restaurants = await Restaurant.find(filter)
+        .sort({ averageRating: -1, totalRatings: -1 })
+        .limit(10)
+        .lean();
+      return { restaurants };
+    });
+
+    sendSuccess(res, "Recommended restaurants fetched", result);
+  } catch (err) {
+    next(err);
+  }
+};
+
 
 // GET /restaurants/nearby
 export const getNearbyRestaurants = async (

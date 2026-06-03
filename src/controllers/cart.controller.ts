@@ -227,3 +227,29 @@ export const removeCoupon = async (
     next(err);
   }
 };
+
+// PATCH /cart/preferences
+export const updateCartPreferences = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const { generalNote, dontSendCutlery } = req.body;
+    const cart = await getUserCart(req.userId!);
+    if (!cart) {
+      sendError(res, "Cart is empty", 404);
+      return;
+    }
+
+    if (generalNote !== undefined) cart.generalNote = generalNote;
+    if (dontSendCutlery !== undefined) cart.dontSendCutlery = dontSendCutlery;
+
+    await recalculateCart(cart);
+    const populated = await getUserCart(req.userId!);
+
+    sendSuccess(res, "Cart preferences updated", { cart: populated });
+  } catch (err) {
+    next(err);
+  }
+};

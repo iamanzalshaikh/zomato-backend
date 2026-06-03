@@ -17,6 +17,7 @@ import {
   deleteCategory,
   createMenuItem,
   getMenuItemsByRestaurant,
+  getCombosByRestaurant,
   getMenuItemDetails,
   updateMenuItem,
   deleteMenuItem,
@@ -55,6 +56,7 @@ router.patch(
   asyncHandler(toggleItemAvailability),
 );
 
+router.get("/items/combos/:restaurantId", asyncHandler(getCombosByRestaurant));
 router.get("/items/:restaurantId", asyncHandler(getMenuItemsByRestaurant));
 router.patch(
   "/items/:itemId",

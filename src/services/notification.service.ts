@@ -15,6 +15,7 @@ import { enqueueNotificationJob } from "../queues/notification.queue.js";
 import { enqueueEmailJob } from "../queues/email.queue.js";
 import { enqueueSmsJob } from "../queues/sms.queue.js";
 import { AppError } from "../utils/AppError.js";
+import { getFirebaseMessaging, isFirebaseEnabled } from "../config/firebase.js";
 
 export type NotificationChannel = "in_app" | "email" | "push" | "sms";
 
@@ -91,12 +92,53 @@ export async function sendPushNotification(
     logger.debug(`[Push stub] no device tokens for user=${userId}`);
     return;
   }
-  for (const dt of tokens) {
-    logger.info(
-      `[Push stub] platform=${dt.platform} token=${dt.token.slice(0, 12)}... title=${title}`,
-      data,
-    );
+
+  const messaging = getFirebaseMessaging();
+  if (!isFirebaseEnabled() || !messaging) {
+    for (const dt of tokens) {
+      logger.info(
+        `[Push stub] platform=${dt.platform} token=${dt.token.slice(0, 12)}... title=${title}`,
+        data,
+      );
+    }
+    return;
   }
+
+  const resp = await messaging.sendEachForMulticast({
+    tokens: tokens.map((t) => t.token),
+    notification: { title, body },
+    data: data ?? {},
+  });
+
+  // Clean up invalid tokens (unregistered, invalid, etc.)
+  const invalidIdxs: number[] = [];
+  resp.responses.forEach((r: { success: boolean; error?: unknown }, idx: number) => {
+    if (r.success) return;
+    const code = (r.error as { code?: string } | undefined)?.code;
+    if (
+      code === "messaging/registration-token-not-registered" ||
+      code === "messaging/invalid-registration-token" ||
+      code === "messaging/invalid-argument"
+    ) {
+      invalidIdxs.push(idx);
+    }
+  });
+
+  if (invalidIdxs.length > 0) {
+    const invalidTokens = invalidIdxs
+      .map((i) => tokens[i]?.token)
+      .filter(Boolean) as string[];
+    if (invalidTokens.length > 0) {
+      await User.updateOne(
+        { _id: userId },
+        { $pull: { deviceTokens: { token: { $in: invalidTokens } } } },
+      );
+    }
+  }
+
+  logger.info(
+    `Push sent user=${userId} ok=${resp.successCount} fail=${resp.failureCount}`,
+  );
 }
 
 export async function notifyUser(job: NotificationJobPayload): Promise<void> {

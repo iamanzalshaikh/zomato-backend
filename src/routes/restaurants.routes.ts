@@ -14,6 +14,7 @@ import {
 import {
   createRestaurant,
   getRestaurants,
+  getRecommendedRestaurants,
   getNearbyRestaurants,
   searchRestaurantsHandler,
   getRestaurantById,
@@ -27,6 +28,11 @@ import {
 const router = Router();
 
 // Public browse flow (Zomato: discover → search → nearby)
+router.get(
+  "/recommended",
+  asyncHandler(getRecommendedRestaurants),
+);
+
 router.get(
   "/search",
   validate(searchQuerySchema, "query"),

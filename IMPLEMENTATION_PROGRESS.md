@@ -126,6 +126,25 @@ After `npm run seed:phase2`:
 | Menu | Category **Biryani**, item **Chicken Biryani** ₹299 |
 | Coupon | **WELCOME50** — flat ₹50 off, min order ₹199 |
 
+After `npm run seed:demo`:
+
+| Entity | Details |
+|--------|---------|
+| Restaurants | 3 full demo restaurants: **Demo Biryani House**, **QuickSlice Pizza**, **GreenBowl Kitchen** |
+| Menu items | ~12 items with real images (Unsplash), food types (veg/nonveg), `isRecommended` flags |
+| Portion addons | Items like Biryani, Pizza, etc. have `Portion: Half`, `Portion: Full` addons stored in MongoDB |
+
+After `npm run seed:coupons`:
+
+| Code | Type | Discount | Scope |
+|------|------|----------|-------|
+| `WELCOME50` | Flat | ₹50 off (min ₹199) | All restaurants |
+| `SAVE20` | Percentage | 20% off, max ₹100 (min ₹299) | All restaurants |
+| `FREEDEL` | Flat | ₹40 off (min ₹149) | All restaurants |
+| `BIRYANI30` | Flat | ₹30 off (min ₹249) | Demo Biryani House only |
+| `PIZZA25` | Percentage | 25% off, max ₹80 (min ₹299) | QuickSlice Pizza only |
+| `HEALTHY10` | Flat | ₹10 off (min ₹199) | GreenBowl Kitchen only |
+
 Use `npm run seed:admin` for admin panel testing later.
 
 ---
@@ -246,7 +265,7 @@ Use `npm run seed:admin` for admin panel testing later.
 
 ### Phase 6 — Menu ✅
 
-**Purpose:** Categories, items, addons, availability, search.
+**Purpose:** Categories, items, addons, availability, search, combos.
 
 **APIs:** `/api/v1/menu/*`
 
@@ -258,11 +277,14 @@ Use `npm run seed:admin` for admin panel testing later.
 - Public: flat item list, item details
 - Toggle availability
 - Menu search across items
+- **`GET /menu/items/combos/:restaurantId`** — "Most Ordered Together" pairs from **that restaurant's own items only** (food paired with beverage from same restaurant; no cross-restaurant data)
+- **Portion size addons** — items seed `Portion: Half`, `Portion: Full` etc. as `addons[]`; frontend reads these and renders them as radio buttons in the Customize Modal
 
 **Rules:**
 
 - Public menu only for approved restaurants
 - Items respect `isAvailable` and `isDeleted`
+- Combos endpoint auto-detects beverages by category name / item name keywords
 
 **Detail:** `PHASE_6.md`
 
@@ -452,14 +474,16 @@ All paths are under `http://localhost:5000/api/v1`.
 
 ### Menu — `/menu`
 
-| Method | Path | Auth |
-|--------|------|------|
-| POST/PATCH/DELETE | `/categories`, `/categories/:id` | Yes (owner) |
-| GET | `/categories/:restaurantId` | No |
-| POST/PATCH/DELETE | `/items`, `/items/:id` | Yes (owner) |
-| GET | `/items/:restaurantId`, `/items/details/:id` | No |
-| PATCH | `/items/availability/:id` | Yes (owner) |
-| GET | `/search` | No |
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST/PATCH/DELETE | `/categories`, `/categories/:id` | Yes (owner) | Category CRUD |
+| GET | `/categories/:restaurantId` | No | Public categories + nested items |
+| POST/PATCH/DELETE | `/items`, `/items/:id` | Yes (owner) | Menu item CRUD |
+| GET | `/items/:restaurantId` | No | All items for a restaurant (includes addons) |
+| GET | `/items/details/:id` | No | Single item detail |
+| GET | **`/items/combos/:restaurantId`** | No | **Most Ordered Together** — auto-paired combos from restaurant's own items |
+| PATCH | `/items/availability/:id` | Yes (owner) | Toggle item availability |
+| GET | `/search` | No | Search menu items |
 
 ### Cart — `/cart`
 
@@ -508,6 +532,14 @@ All paths are under `http://localhost:5000/api/v1`.
 | PATCH | `/pickup-order/:orderId`, `/complete-delivery/:orderId` | Yes (rider) |
 | PATCH | `/:riderId/approve-dev` | Yes (dev) |
 
+### Coupons — `/coupons`
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | **`/coupons/restaurant/:restaurantId`** | No | **Active coupons for a restaurant** — global + restaurant-specific, sorted by discount value |
+
+> ⚠️ Admin coupon CRUD (`POST /coupons`, `PATCH /coupons/:id`, `DELETE /coupons/:id`) is planned for the admin panel — not yet exposed.
+
 ---
 
 ## 8. End-to-end customer journey
@@ -528,12 +560,15 @@ This is the **full path** you can test today with seed data + three roles.
                                     ↓
 ┌─────────────────────────────────────────────────────────────────────────┐
 │ 3. MENU                                                                  │
-│    GET /menu/categories/:restaurantId  →  item details / search          │
+│    GET /menu/items/:restaurantId  →  item details / search               │
+│    GET /menu/items/combos/:restaurantId  →  Most Ordered Together        │
+│    GET /coupons/restaurant/:restaurantId  →  Offer banner + modal        │
 └─────────────────────────────────────────────────────────────────────────┘
                                     ↓
 ┌─────────────────────────────────────────────────────────────────────────┐
 │ 4. CART                                                                  │
-│    POST /cart/add  →  GET /cart  →  POST /cart/apply-coupon (WELCOME50)  │
+│    POST /cart/add (with addons[] for portion sizes)                      │
+│    GET /cart  →  POST /cart/apply-coupon (WELCOME50 / SAVE20 / FREEDEL)  │
 └─────────────────────────────────────────────────────────────────────────┘
                                     ↓
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -640,7 +675,7 @@ PENDING
 | orders | 8, 10 | Timeline, OTP, rider link |
 | payments | 9 | Razorpay create/verify/webhook |
 | riders, rider_locations | 10 | |
-| coupons | 7–8 | WELCOME50 seed |
+| coupons | 7–8, **today** | WELCOME50 + 5 new coupons (global + restaurant-specific) via `seed:coupons`; public API `GET /coupons/restaurant/:restaurantId` |
 | wallet_transactions | 4 | Read history |
 | notifications | 4 | |
 | support_tickets | 8 | Refund requests |
@@ -684,10 +719,24 @@ PENDING
 
 - Social login (501)
 - Stripe (not started; Razorpay chosen for India mobile)
-- Coupon admin CRUD routes
+- Coupon admin CRUD routes (create/edit/delete coupons via admin panel — not yet built; seeding only)
 - Review after delivery
 - Wallet top-up with Razorpay
 - Production admin rider approval (only `approve-dev` in development)
+
+---
+
+## Today's additions (June 2026)
+
+Built on top of Phase 19 baseline:
+
+| Feature | Backend | Frontend |
+|---------|---------|----------|
+| **Most Ordered Together** | `GET /menu/items/combos/:restaurantId` — auto-pairs food with beverages from same restaurant | Restaurant detail page — real API, no mock data |
+| **Portion size addons** | Seeded as `Portion: Half / Full / Large` on menu items via `seed:demo` | Customize Modal — radio buttons for sizes, checkboxes for extras |
+| **Public Coupon API** | `GET /coupons/restaurant/:restaurantId` — returns active global + restaurant-specific coupons | Offer banner shows real count; tap opens bottom sheet with coupon cards + COPY button |
+| **Coupon seeding** | `npm run seed:coupons` — seeds 6 coupons (3 global + 3 restaurant-specific) | — |
+| **Frontend services** | — | `services/coupons.ts`, `hooks/queries/coupons.ts` |
 
 ---
 
@@ -734,4 +783,4 @@ For step-by-step test commands and request bodies, use:
 
 ---
 
-*Last updated: reflects implementation through Phase 19 (Testing).*
+*Last updated: June 2026 — Phase 19 + Combos API, Portion Addons, Public Coupons API, Coupon Seed.*
