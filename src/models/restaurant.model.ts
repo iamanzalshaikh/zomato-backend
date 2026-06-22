@@ -3,6 +3,7 @@ import { RestaurantStatus } from "../types/enums.js";
 import {
   geoPointSchema,
   restaurantAddressSchema,
+  bankDetailsSchema,
 } from "./schemas/common.schemas.js";
 
 export interface IRestaurantDocument extends Document {
@@ -25,10 +26,17 @@ export interface IRestaurantDocument extends Document {
   minimumOrderAmount: number;
   packagingCharge: number;
   platformCommissionPercentage: number;
+  settlementCycle?: string;
   gstNumber?: string;
   fssaiLicense?: string;
   openingTime?: string;
   closingTime?: string;
+  weeklyHours?: Array<{
+    day: string;
+    open?: string;
+    close?: string;
+    isClosed?: boolean;
+  }>;
   isOpen: boolean;
   supportsCOD: boolean;
   supportsOnlinePayment: boolean;
@@ -37,6 +45,11 @@ export interface IRestaurantDocument extends Document {
   totalRatings: number;
   totalOrders: number;
   isDeleted: boolean;
+  bankAccountDetails?: {
+    accountHolderName?: string;
+    accountNumber?: string;
+    ifscCode?: string;
+  };
 }
 
 const restaurantSchema = new Schema<IRestaurantDocument>(
@@ -60,10 +73,19 @@ const restaurantSchema = new Schema<IRestaurantDocument>(
     minimumOrderAmount: { type: Number, default: 0 },
     packagingCharge: { type: Number, default: 0 },
     platformCommissionPercentage: { type: Number, default: 15 },
+    settlementCycle: { type: String, default: "WEEKLY" },
     gstNumber: String,
     fssaiLicense: String,
     openingTime: String,
     closingTime: String,
+    weeklyHours: [
+      {
+        day: { type: String, trim: true },
+        open: String,
+        close: String,
+        isClosed: { type: Boolean, default: false },
+      },
+    ],
     isOpen: { type: Boolean, default: false },
     supportsCOD: { type: Boolean, default: true },
     supportsOnlinePayment: { type: Boolean, default: true },
@@ -76,6 +98,7 @@ const restaurantSchema = new Schema<IRestaurantDocument>(
     totalRatings: { type: Number, default: 0 },
     totalOrders: { type: Number, default: 0 },
     isDeleted: { type: Boolean, default: false },
+    bankAccountDetails: { type: bankDetailsSchema, default: undefined },
   },
   { timestamps: true, collection: "restaurants" },
 );
@@ -83,7 +106,6 @@ const restaurantSchema = new Schema<IRestaurantDocument>(
 restaurantSchema.index({ location: "2dsphere" });
 restaurantSchema.index({ ownerId: 1 });
 restaurantSchema.index({ restaurantStatus: 1, isOpen: 1 });
-restaurantSchema.index({ slug: 1 });
 restaurantSchema.index({ averageRating: -1 });
 
 const Restaurant: Model<IRestaurantDocument> = mongoose.model<IRestaurantDocument>(

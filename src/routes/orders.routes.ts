@@ -15,9 +15,11 @@ import {
   getOrderById,
   getOrderHistory,
   trackOrder,
+  trackOrderRoute,
   cancelOrderHandler,
   updateStatus,
   assignRider,
+  listAvailableRiders,
   verifyDeliveryOtpHandler,
   getActiveOrders,
   refundRequest,
@@ -48,6 +50,7 @@ router.get(
   asyncHandler(getRestaurantOrders),
 );
 router.get("/track/:orderId", asyncHandler(trackOrder));
+router.get("/track/:orderId/route", asyncHandler(trackOrderRoute));
 router.patch(
   "/cancel/:orderId",
   validate(cancelOrderSchema),
@@ -62,6 +65,11 @@ router.patch(
   "/assign-rider/:orderId",
   validate(assignRiderSchema),
   asyncHandler(assignRider),
+);
+router.get(
+  "/riders/available",
+  requireRestaurantOwner,
+  asyncHandler(listAvailableRiders),
 );
 router.get("/:orderId", asyncHandler(getOrderById));
 

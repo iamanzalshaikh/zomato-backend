@@ -10,9 +10,13 @@ import {
   listRestaurantsQuerySchema,
   nearbyQuerySchema,
   searchQuerySchema,
+  reverseGeocodeQuerySchema,
+  placesAutocompleteQuerySchema,
+  placeIdParamSchema,
 } from "../validators/restaurant.validator.js";
 import {
   createRestaurant,
+  getMyRestaurant,
   getRestaurants,
   getRecommendedRestaurants,
   getNearbyRestaurants,
@@ -23,7 +27,17 @@ import {
   updateRestaurantStatus,
   getRestaurantAnalytics,
   approveRestaurantDev,
+  reverseGeocodeHandler,
+  placesAutocompleteHandler,
+  placeDetailsHandler,
+  getRestaurantSupportTickets,
 } from "../controllers/restaurants.controller.js";
+import {
+  restaurantEarningsSummary,
+  restaurantSettlementHistory,
+} from "../controllers/finance.controller.js";
+import { requireRestaurantOwner } from "../middlewares/role.middleware.js";
+import { financeListQuerySchema } from "../validators/finance.validator.js";
 
 const router = Router();
 
@@ -56,8 +70,32 @@ router.post(
   validate(createRestaurantSchema),
   asyncHandler(createRestaurant),
 );
+router.get(
+  "/mine",
+  isAuth,
+  requireRestaurantOwner,
+  asyncHandler(getMyRestaurant),
+);
 
 // Static paths before :restaurantId
+router.get(
+  "/geocode/reverse",
+  isAuth,
+  validate(reverseGeocodeQuerySchema, "query"),
+  asyncHandler(reverseGeocodeHandler),
+);
+router.get(
+  "/places/autocomplete",
+  isAuth,
+  validate(placesAutocompleteQuerySchema, "query"),
+  asyncHandler(placesAutocompleteHandler),
+);
+router.get(
+  "/places/details/:placeId",
+  isAuth,
+  validate(placeIdParamSchema, "params"),
+  asyncHandler(placeDetailsHandler),
+);
 router.patch(
   "/status/:restaurantId",
   isAuth,
@@ -68,6 +106,25 @@ router.get(
   "/analytics/:restaurantId",
   isAuth,
   asyncHandler(getRestaurantAnalytics),
+);
+router.get(
+  "/:restaurantId/support-tickets",
+  isAuth,
+  requireRestaurantOwner,
+  asyncHandler(getRestaurantSupportTickets),
+);
+router.get(
+  "/:restaurantId/earnings",
+  isAuth,
+  requireRestaurantOwner,
+  asyncHandler(restaurantEarningsSummary),
+);
+router.get(
+  "/:restaurantId/settlements",
+  isAuth,
+  requireRestaurantOwner,
+  validate(financeListQuerySchema, "query"),
+  asyncHandler(restaurantSettlementHistory),
 );
 router.patch(
   "/:restaurantId/approve-dev",
