@@ -3,9 +3,15 @@ import { AppError } from "../utils/AppError.js";
 import type { ParsedAddress } from "./geocode.service.js";
 
 function googleKey(kind: "geocoding" | "places" | "routes"): string | undefined {
-  if (kind === "geocoding") return env.GOOGLE_GEOCODING_API_KEY;
-  if (kind === "places") return env.GOOGLE_PLACES_API_KEY;
-  return env.GOOGLE_ROUTES_API_KEY;
+  const shared =
+    env.GOOGLE_GEOCODING_API_KEY ||
+    env.GOOGLE_PLACES_API_KEY ||
+    env.GOOGLE_ROUTES_API_KEY ||
+    env.GOOGLE_MAPS_ANDROID_KEY ||
+    env.GOOGLE_MAPS_IOS_KEY;
+  if (kind === "geocoding") return env.GOOGLE_GEOCODING_API_KEY || shared;
+  if (kind === "places") return env.GOOGLE_PLACES_API_KEY || shared;
+  return env.GOOGLE_ROUTES_API_KEY || shared;
 }
 
 function parseGoogleAddress(
