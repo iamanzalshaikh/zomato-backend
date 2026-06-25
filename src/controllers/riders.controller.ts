@@ -32,6 +32,119 @@ function paramId(value: string | string[]): string {
   return Array.isArray(value) ? value[0] : value;
 }
 
+// POST /riders/register (multipart — KYC images + bank details)
+export const registerMultipart = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    if (!isCloudinaryEnabled()) {
+      throw new AppError("File upload is not configured on the server", 503);
+    }
+
+    const body = req.body as Record<string, string>;
+    const files = req.files as
+      | {
+          profileImage?: Express.Multer.File[];
+          drivingLicense?: Express.Multer.File[];
+          aadhaarCard?: Express.Multer.File[];
+        }
+      | undefined;
+
+    const fullName = String(body.fullName ?? "").trim();
+    const email = String(body.email ?? "").trim();
+    const password = String(body.password ?? "");
+    const mobile = body.mobile ? String(body.mobile).trim() : undefined;
+    const vehicleType = body.vehicleType ? String(body.vehicleType) : undefined;
+    const vehicleNumber = body.vehicleNumber ? String(body.vehicleNumber).trim() : undefined;
+
+    if (!fullName || fullName.length < 2) {
+      throw new AppError("Full name is required", 400);
+    }
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new AppError("Valid email is required", 400);
+    }
+    if (!password || password.length < 6) {
+      throw new AppError("Password must be at least 6 characters", 400);
+    }
+    if (mobile && !/^[0-9]{10}$/.test(mobile)) {
+      throw new AppError("Mobile must be 10 digits", 400);
+    }
+
+    let bankAccountDetails: Record<string, string> | undefined;
+    if (body.bankAccountDetails) {
+      try {
+        bankAccountDetails = JSON.parse(body.bankAccountDetails) as Record<string, string>;
+      } catch {
+        throw new AppError("Invalid bank account details", 400);
+      }
+    }
+
+    const accountHolderName = bankAccountDetails?.accountHolderName?.trim();
+    const accountNumber = bankAccountDetails?.accountNumber?.trim();
+    const ifscCode = bankAccountDetails?.ifscCode?.trim().toUpperCase();
+    if (!accountHolderName || !accountNumber || !ifscCode) {
+      throw new AppError("Bank account holder name, account number and IFSC are required", 400);
+    }
+    if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifscCode)) {
+      throw new AppError("Enter a valid IFSC code", 400);
+    }
+
+    const licenseFile = files?.drivingLicense?.[0];
+    const aadhaarFile = files?.aadhaarCard?.[0];
+    const profileFile = files?.profileImage?.[0];
+    if (!licenseFile?.buffer) {
+      throw new AppError("Driving license photo is required", 400);
+    }
+    if (!aadhaarFile?.buffer) {
+      throw new AppError("Aadhaar card photo is required", 400);
+    }
+
+    const uploadFolder = `rider-kyc/pending/${Date.now()}`;
+    const [drivingLicense, aadhaarCard, profileImage] = await Promise.all([
+      uploadImageBuffer(licenseFile.buffer, uploadFolder, licenseFile.mimetype),
+      uploadImageBuffer(aadhaarFile.buffer, uploadFolder, aadhaarFile.mimetype),
+      profileFile?.buffer
+        ? uploadImageBuffer(profileFile.buffer, uploadFolder, profileFile.mimetype)
+        : Promise.resolve(undefined),
+    ]);
+
+    if (!drivingLicense || !aadhaarCard) {
+      throw new AppError("Failed to upload KYC documents", 500);
+    }
+
+    const { user, rider } = await registerRider(
+      {
+        fullName,
+        email,
+        password,
+        mobile,
+        vehicleType,
+        vehicleNumber,
+        drivingLicense,
+        aadhaarCard,
+        profileImage,
+        bankAccountDetails: {
+          accountHolderName,
+          accountNumber,
+          ifscCode,
+        },
+      },
+      req.userId,
+    );
+
+    sendSuccess(
+      res,
+      "Application submitted. An admin will review your documents before you can sign in.",
+      { user: user.getPublicProfile(), rider },
+      201,
+    );
+  } catch (err) {
+    next(err);
+  }
+};
+
 // POST /riders/register
 export const register = async (
   req: AuthRequest,

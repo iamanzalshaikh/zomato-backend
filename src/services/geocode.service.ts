@@ -53,6 +53,15 @@ function parseNominatimAddress(a: NominatimAddress): ParsedAddress {
   };
 }
 
+function fallbackAddress(latitude: number, longitude: number): ParsedAddress {
+  return {
+    street: `Pinned location (${latitude.toFixed(5)}, ${longitude.toFixed(5)})`,
+    city: "",
+    state: "",
+    country: "India",
+  };
+}
+
 async function nominatimReverseGeocode(
   latitude: number,
   longitude: number,
@@ -72,12 +81,12 @@ async function nominatimReverseGeocode(
   });
 
   if (!res.ok) {
-    throw new AppError("Reverse geocoding failed", 502);
+    throw new AppError(`Reverse geocoding failed (${res.status})`, 502);
   }
 
-  const data = (await res.json()) as NominatimReverseResponse;
-  if (!data.address) {
-    throw new AppError("No address found for this location", 404);
+  const data = (await res.json()) as NominatimReverseResponse & { error?: string };
+  if (data.error || !data.address) {
+    throw new AppError(data.error ?? "No address found for this location", 404);
   }
 
   return parseNominatimAddress(data.address);
@@ -98,8 +107,16 @@ export async function reverseGeocode(
     throw new AppError("Invalid coordinates", 400);
   }
 
-  const google = await googleReverseGeocode(latitude, longitude);
-  if (google) return google;
+  try {
+    const google = await googleReverseGeocode(latitude, longitude);
+    if (google) return google;
+  } catch {
+    /* try nominatim next */
+  }
 
-  return nominatimReverseGeocode(latitude, longitude);
+  try {
+    return await nominatimReverseGeocode(latitude, longitude);
+  } catch {
+    return fallbackAddress(latitude, longitude);
+  }
 }

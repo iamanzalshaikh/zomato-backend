@@ -16,6 +16,7 @@ import {
 } from "../validators/rider.validator.js";
 import {
   register,
+  registerMultipart,
   login,
   getProfile,
   updateProfile,
@@ -40,7 +41,7 @@ import {
 } from "../controllers/finance.controller.js";
 import { financeListQuerySchema } from "../validators/finance.validator.js";
 import { createWithdrawalSchema } from "../validators/platformConfig.validator.js";
-import { imageUpload } from "../middlewares/upload.middleware.js";
+import { imageUpload, riderKycUpload } from "../middlewares/upload.middleware.js";
 
 const router = Router();
 
@@ -48,11 +49,19 @@ router.post(
   "/register",
   optionalAuth,
   (req, res, next) => {
+    if (req.is("multipart/form-data")) {
+      return riderKycUpload(req, res, (err) => {
+        if (err) return next(err);
+        asyncHandler(registerMultipart)(req, res, next);
+      });
+    }
     const authReq = req as AuthRequest;
     const schema = authReq.userId ? onboardRiderSchema : registerRiderSchema;
-    return validate(schema)(req, res, next);
+    return validate(schema)(req, res, (err) => {
+      if (err) return next(err);
+      asyncHandler(register)(req, res, next);
+    });
   },
-  asyncHandler(register),
 );
 router.post("/login", validate(riderLoginSchema), asyncHandler(login));
 

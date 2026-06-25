@@ -101,6 +101,7 @@ export async function registerRider(
     vehicleNumber?: string;
     drivingLicense?: string;
     aadhaarCard?: string;
+    profileImage?: string;
     bankAccountDetails?: Record<string, string>;
   },
   existingUserId?: string,
@@ -150,8 +151,9 @@ export async function registerRider(
     vehicleNumber: input.vehicleNumber,
     drivingLicense: input.drivingLicense,
     aadhaarCard: input.aadhaarCard,
+    profileImage: input.profileImage,
     bankAccountDetails: input.bankAccountDetails,
-    verificationStatus: VerificationStatus.APPROVED,
+    verificationStatus: VerificationStatus.PENDING,
   });
 
   return { user, rider };
@@ -178,6 +180,19 @@ export async function riderLogin(
   }
 
   const rider = await getRiderByUserId(user._id.toString());
+
+  if (rider.verificationStatus === VerificationStatus.PENDING) {
+    throw new AppError(
+      "Your rider application is pending admin approval. Please try again after approval.",
+      403,
+    );
+  }
+  if (rider.verificationStatus === VerificationStatus.REJECTED) {
+    throw new AppError(
+      "Your rider application was rejected. Contact support for help.",
+      403,
+    );
+  }
 
   user.lastLoginAt = new Date();
   await user.save();
