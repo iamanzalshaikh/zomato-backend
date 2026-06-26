@@ -124,7 +124,7 @@ export const registerMultipart = async (
         vehicleNumber,
         drivingLicense,
         aadhaarCard,
-        profileImage,
+        profileImage: profileImage ?? undefined,
         bankAccountDetails: {
           accountHolderName,
           accountNumber,
