@@ -22,8 +22,12 @@ const transporter = hasSmtp
   : null;
 
 function resolveFromAddress(): string {
+  if (hasResend) {
+    const from = config.EMAIL_FROM?.trim();
+    if (from && !from.includes("@gmail.com")) return from;
+    return "QBITES <onboarding@resend.dev>";
+  }
   if (config.EMAIL_FROM) return config.EMAIL_FROM;
-  if (hasResend) return "QBITES <onboarding@resend.dev>";
   return `"Food App" <${config.SMTP_USER}>`;
 }
 
