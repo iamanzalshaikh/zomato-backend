@@ -117,7 +117,7 @@ export const trackOrderRoute = async (
     const orderId = paramId(req.params.orderId);
     const order = await getOrderOrFail(orderId);
     await assertOrderAccess(req, order);
-    const { googleRoutePolyline } = await import("../services/google-maps.service.js");
+    const { getRoutePolyline, isValidPoint } = await import("../services/routing.service.js");
     const { getLiveRiderLocation } = await import("../services/tracking.service.js");
 
     const live = await getLiveRiderLocation(orderId);
@@ -128,27 +128,40 @@ export const trackOrderRoute = async (
     const customerLng = order.customerAddress?.longitude;
     const restaurantDoc = order.restaurantId as { latitude?: number; longitude?: number } | undefined;
 
-    const customer =
+    const customerPoint =
       Number.isFinite(customerLat) && Number.isFinite(customerLng)
         ? { latitude: customerLat!, longitude: customerLng! }
         : null;
-    const restaurant =
+    const restaurantPoint =
       restaurantDoc?.latitude != null && restaurantDoc?.longitude != null
         ? { latitude: restaurantDoc.latitude, longitude: restaurantDoc.longitude }
         : null;
 
-    let path: Array<{ latitude: number; longitude: number }> | null = null;
+    const customer = isValidPoint(customerPoint) ? customerPoint : null;
+    const restaurant = isValidPoint(restaurantPoint) ? restaurantPoint : null;
+    const rider = isValidPoint(riderLoc) ? riderLoc : null;
 
-    if (riderLoc && customer && ["PICKED_UP", "ON_THE_WAY"].includes(order.orderStatus)) {
-      path = await googleRoutePolyline({ origin: riderLoc, destination: customer });
+    let path: Array<{ latitude: number; longitude: number }> | null = null;
+    const status = order.orderStatus;
+
+    if (["PICKED_UP", "ON_THE_WAY"].includes(status) && rider && customer) {
+      path = await getRoutePolyline({ origin: rider, destination: customer });
+    } else if (
+      ["RIDER_ASSIGNED", "READY_FOR_PICKUP"].includes(status) &&
+      rider &&
+      restaurant
+    ) {
+      path = await getRoutePolyline({ origin: rider, destination: restaurant });
     } else if (restaurant && customer) {
-      path = await googleRoutePolyline({
+      path = await getRoutePolyline({
         origin: restaurant,
         destination: customer,
-        waypoints: riderLoc ? [riderLoc] : undefined,
+        waypoints: rider ? [rider] : undefined,
       });
-    } else if (restaurant && riderLoc) {
-      path = await googleRoutePolyline({ origin: restaurant, destination: riderLoc });
+    } else if (restaurant && rider) {
+      path = await getRoutePolyline({ origin: restaurant, destination: rider });
+    } else if (rider && customer) {
+      path = await getRoutePolyline({ origin: rider, destination: customer });
     }
 
     sendSuccess(res, "Route polyline", { path: path ?? [] });
