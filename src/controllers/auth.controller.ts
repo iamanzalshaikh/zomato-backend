@@ -26,6 +26,15 @@ import {
   parseRole,
 } from "../services/auth.service.js";
 import { rotateRefreshToken, revokeRefreshToken } from "../services/token.service.js";
+import config from "../config/config.js";
+
+function withDevOtp<T extends Record<string, unknown>>(
+  payload: T,
+  otp: string,
+): T & { devOtp?: string } {
+  if (config.NODE_ENV === "production") return payload;
+  return { ...payload, devOtp: otp };
+}
 
 function getRefreshTokenFromRequest(req: AuthRequest): string | undefined {
   return (
@@ -156,7 +165,7 @@ async function sendSignupOtpHandler(
   const otp = generateOTP();
   await saveOtp("signup", email, otp, mobile);
   await sendSignupOtpEmail(email, otp);
-  sendSuccess(res, "OTP sent to your email", { email, purpose: "signup" });
+  sendSuccess(res, "OTP sent to your email", withDevOtp({ email, purpose: "signup" }, otp));
 }
 
 async function sendLoginOtpHandler(email: string, res: Response) {
@@ -178,7 +187,7 @@ async function sendLoginOtpHandler(email: string, res: Response) {
   const otp = generateOTP();
   await saveOtp("login", email, otp);
   await sendLoginOtpEmail(email, otp);
-  sendSuccess(res, "OTP sent to your email", { email, purpose: "login" });
+  sendSuccess(res, "OTP sent to your email", withDevOtp({ email, purpose: "login" }, otp));
 }
 
 async function sendResetOtpHandler(email: string, res: Response) {
