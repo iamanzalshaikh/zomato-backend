@@ -1,6 +1,7 @@
 import { Response, NextFunction } from "express";
 import { AuthRequest } from "../types/auth.types.js";
 import { sendSuccess, sendError } from "../utils/apiResponse.js";
+import logger from "../config/logger.js";
 import {
   getUserCart,
   getOrCreateCart,
@@ -38,12 +39,20 @@ export const addToCart = async (
   res: Response,
   next: NextFunction,
 ) => {
+  const startTime = Date.now();
   try {
     const { restaurantId, menuItemId, quantity, addons, specialInstructions } =
       req.body;
 
-    await ensureRestaurantForCart(restaurantId);
+    logger.info(`[AddToCart] Starting add to cart for user ${req.userId}, restaurant ${restaurantId}, menuItem ${menuItemId}`);
+
+    const t1 = Date.now();
+    const restaurant = await ensureRestaurantForCart(restaurantId);
+    logger.info(`[AddToCart] ensureRestaurantForCart took ${Date.now() - t1}ms`);
+
+    const t2 = Date.now();
     const menuItem = await getMenuItemForCart(menuItemId);
+    logger.info(`[AddToCart] getMenuItemForCart took ${Date.now() - t2}ms`);
 
     if (menuItem.restaurantId.toString() !== restaurantId) {
       sendError(res, "Menu item does not belong to this restaurant", 400);
@@ -51,7 +60,9 @@ export const addToCart = async (
     }
 
     const unitPrice = menuItem.discountedPrice ?? menuItem.price;
+    const t3 = Date.now();
     const cart = await getOrCreateCart(req.userId!, restaurantId);
+    logger.info(`[AddToCart] getOrCreateCart took ${Date.now() - t3}ms`);
 
     const addonList = addons ?? [];
     const existing = cart.items.find(
@@ -76,11 +87,19 @@ export const addToCart = async (
       });
     }
 
-    await recalculateCart(cart);
+    const t4 = Date.now();
+    await recalculateCart(cart, restaurant);
+    logger.info(`[AddToCart] recalculateCart took ${Date.now() - t4}ms`);
+
+    const t5 = Date.now();
     const populated = await getUserCart(req.userId!);
+    logger.info(`[AddToCart] getUserCart took ${Date.now() - t5}ms`);
+
+    logger.info(`[AddToCart] Total add to cart took ${Date.now() - startTime}ms`);
 
     sendSuccess(res, "Item added to cart", { cart: populated }, 201);
   } catch (err) {
+    logger.error(`[AddToCart] Error adding to cart: ${err instanceof Error ? err.message : String(err)}`);
     next(err);
   }
 };

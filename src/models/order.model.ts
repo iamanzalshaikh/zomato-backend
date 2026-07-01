@@ -75,6 +75,8 @@ export interface IOrderDocument extends Document {
   refundAmount: number;
   deliveryOtp?: string;
   deliveryInstructions?: string;
+  dontSendCutlery: boolean;
+  generalNote?: string;
   timelineLogs: Array<{ status: string; updatedBy: string; timestamp: Date }>;
   fraudFlags: string[];
   settlement?: IOrderSettlement;
@@ -138,6 +140,8 @@ const orderSchema = new Schema<IOrderDocument>(
     refundAmount: { type: Number, default: 0 },
     deliveryOtp: String,
     deliveryInstructions: String,
+    dontSendCutlery: { type: Boolean, default: false },
+    generalNote: { type: String, default: "" },
     timelineLogs: [timelineLogSchema],
     fraudFlags: [String],
     settlement: { type: orderSettlementSchema, default: undefined },

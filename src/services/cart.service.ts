@@ -40,8 +40,8 @@ export async function getMenuItemForCart(menuItemId: string) {
   return item;
 }
 
-export async function recalculateCart(cart: InstanceType<typeof Cart>) {
-  const restaurant = await Restaurant.findById(cart.restaurantId);
+export async function recalculateCart(cart: InstanceType<typeof Cart>, restaurantObj?: any) {
+  const restaurant = restaurantObj || await Restaurant.findById(cart.restaurantId);
   if (!restaurant) {
     throw new AppError("Restaurant not found", 404);
   }

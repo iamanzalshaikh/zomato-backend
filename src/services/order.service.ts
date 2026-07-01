@@ -264,6 +264,8 @@ export async function createOrderFromCart(
       longitude,
     },
     deliveryInstructions: input.deliveryInstructions,
+    dontSendCutlery: cart.dontSendCutlery ?? false,
+    generalNote: cart.generalNote ?? "",
     deliveryOtp: generateDeliveryOtp(),
     estimatedPreparationTime: 30,
     estimatedDeliveryTime: new Date(Date.now() + 45 * 60 * 1000),
